@@ -1,0 +1,11 @@
+name: robustphys
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch-cuda=12.1
+  - pytorch==2.2.2
+  - torchaudio==2.2.2
+  - torchvision==0.17.2
+  - ipykernel
+prefix: /home/tianze/miniconda3/envs/robustphys

@@ -1,0 +1,17 @@
+BASE: ['']
+DATALOADER:
+  DATASET: "iBVP"
+  RAW_PATH: "/hdd2/rppg-datasets/iBVP-dataset/raw"
+  CACHED_PATH: "/hdd2/rppg-datasets/iBVP-dataset/cached/fixedface_bbox1.5_resize128x128"
+  FPS: 30
+
+PRE_PROCESSING:
+  CROP_FACE:
+    DO_CROP_FACE: True
+    BACKEND: "MTCNN"
+    USE_LARGE_FACE_BOX: True
+    LARGE_BOX_COEF: 1.5
+    DO_DYNAMIC_DETECTION: False
+  RESIZE:
+    W: 128
+    H: 128
