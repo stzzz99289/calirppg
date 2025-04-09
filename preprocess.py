@@ -1,5 +1,5 @@
 import argparse
-from config import get_config
+from config import get_config_from_file
 from utils import get_dataloader
 
 if __name__ == "__main__":
@@ -9,9 +9,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # get configurations from file
-    config = get_config(config_file=args.config)
-    print('Configuration:')
-    print(config, end='\n\n')
+    config = get_config_from_file(config_file=args.config)
+    # print('Configuration:')
+    # print(config, end='\n\n')
 
     # get dataloader
     unsupervised_data = get_dataloader(config)

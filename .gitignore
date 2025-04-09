@@ -2,3 +2,6 @@ __pycache__
 backup
 dev.ipynb
 results
+*.png
+*.csv
+*.jpg

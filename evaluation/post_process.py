@@ -31,7 +31,7 @@ def post_processing(rPPG, fs, diff_flag=False, use_bandpass=True, low_pass=45, h
     if diff_flag:  
         post_processed_rPPG = _detrend(np.cumsum(rPPG), 100)
     else:
-        post_processed_rPPG = _detrend(rPPG, 100)
+        post_processed_rPPG = _detrend(rPPG, 100).reshape(-1)
 
     # bandpass filter between [low_pass, high_pass] bpm
     if use_bandpass:

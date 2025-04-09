@@ -1,0 +1,12 @@
+BASE: ['']
+
+DATALOADER:
+  DATASET: "PURE"
+  RAW_PATH: "/mnt/16TB/rppg-datasets/pure/raw"
+  CACHED_PATH: "/mnt/16TB/rppg-datasets/pure/cached/fixedface_bbox1.5_resize128x128"
+  FPS: 30
+
+PRE_PROCESSING:
+  RESIZE:
+    W: 128
+    H: 128

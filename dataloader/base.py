@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 from facenet_pytorch import MTCNN
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import cv2
@@ -26,7 +27,6 @@ class BaseLoader(Dataset):
         self.cached_path = config_data.DATALOADER.CACHED_PATH
         self.dataset_name = config_data.DATALOADER.DATASET
         self.fps = config_data.DATALOADER.FPS
-        self.data_format = config_data.DATALOADER.DATA_FORMAT
 
         # inference config
         self.do_chunk = config_data.INFERENCE.CHUNK.DO_CHUNK
@@ -59,25 +59,15 @@ class BaseLoader(Dataset):
 
         # load original frames and label
         label_only = False # only load label to save time when frames are not needed
-        label = np.load(data_info['label_path'])
+        label = np.load(os.path.join(self.cached_path, data_info['label_path']))
         if not label_only:
-            input = np.load(data_info['input_path'])
+            input = np.load(os.path.join(self.cached_path, data_info['input_path']))
         else:
-            input = np.zeros((self.chunk_length, self.config_data.PRE_PROCESSING.RESIZE.H, self.config_data.PRE_PROCESSING.RESIZE.W, 3))
+            input = np.zeros((self.chunk_length, self.config_data.PRE_PROCESSING.RESIZE.H, self.config_data.PRE_PROCESSING.RESIZE.W, 9))
 
         # slice data based on chunk_length and chunk_overlap
         input = np.float32(input[chunk_start:chunk_end])
         label = np.float32(label[chunk_start:chunk_end])
-
-        # convert data format
-        if self.data_format == 'NDCHW':
-            input = np.transpose(input, (0, 3, 1, 2))
-        elif self.data_format == 'NCDHW':
-            input = np.transpose(input, (3, 0, 1, 2))
-        elif self.data_format == 'NDHWC':
-            pass
-        else:
-            raise ValueError('Unsupported Data Format!')
         
         # return item
         # print(f"item idx: {index} from trail {data_info['subject_name']}_{data_info['trail_index']} {chunk_start} ~ {chunk_end}")
@@ -116,23 +106,33 @@ class BaseLoader(Dataset):
 
             # check if preprocessed data already exists
             self.update_logs(f"===subject {subject_name} trail {trail_index} at {trail_path}===")
-            preprocessed_input_path = os.path.join(self.cached_path, f"{subject_name}_{trail_index}_input.npy")
-            preprocessed_label_path = os.path.join(self.cached_path, f"{subject_name}_{trail_index}_label.npy")
-            if os.path.exists(preprocessed_input_path) and os.path.exists(preprocessed_label_path):
+            preprocessed_input_path = f"{subject_name}_{trail_index}_input.npy" # path relative to cached_path
+            preprocessed_label_path = f"{subject_name}_{trail_index}_label.npy" # path relative to cached_path
+            if os.path.exists(os.path.join(self.cached_path, preprocessed_input_path)) \
+                and os.path.exists(os.path.join(self.cached_path, preprocessed_label_path)):
                 self.update_logs(f"preprocessed data already exists for {subject_name}, trail {trail_index}, skipping...")
+                # update preprocessed data info
+                self.preprocessed_data_info.append({
+                    'input_path': preprocessed_input_path,
+                    'label_path': preprocessed_label_path,
+                    'subject_name': subject_name,
+                    'trail_index': trail_index,
+                    'length': len(np.load(os.path.join(self.cached_path, preprocessed_label_path))),
+                })
                 continue
 
             # get processed frames and labels
-            resized_frames = self.get_preprocessed_frames(data_dir)
-            labels, sq_vec = self.get_preprocessed_labels(data_dir, target_length=resized_frames.shape[0])
+            resized_face_frames = self.get_resized_face_frames(data_dir) # shape: (chunk_length, H, W, 3)
+            preprocessed_frames = self.preprocess_frames(resized_face_frames) # shape: (chunk_length, H, W, 9)
+            preprocessed_labels, sq_vec = self.get_preprocessed_labels(data_dir, target_length=preprocessed_frames.shape[0]) # labels shape: (chunk_length, 3), sq_vec shape: (chunk_length, )
 
             # discard frames based on signal quality and do shape check
             del_idx = (sq_vec <= 0.3)
-            resized_frames = np.delete(resized_frames, del_idx, axis=0)
-            labels = np.delete(labels, del_idx, axis=0)
+            preprocessed_frames = np.delete(preprocessed_frames, del_idx, axis=0)
+            preprocessed_labels = np.delete(preprocessed_labels, del_idx, axis=0)
             sq_vec = np.delete(sq_vec, del_idx, axis=0)
-            bvp_len = np.shape(labels)[0]
-            frames_len = np.shape(resized_frames)[0]
+            bvp_len = np.shape(preprocessed_labels)[0]
+            frames_len = np.shape(preprocessed_frames)[0]
             assert bvp_len == frames_len, f"bvp len ({bvp_len}) != frames len ({frames_len})"
 
             # update preprocessed data info
@@ -141,12 +141,16 @@ class BaseLoader(Dataset):
                 'label_path': preprocessed_label_path,
                 'subject_name': subject_name,
                 'trail_index': trail_index,
-                'length': len(resized_frames),
+                'length': len(preprocessed_frames),
             })
 
             # saving preprocessed data
-            resized_frames, labels = np.array(resized_frames), np.array(labels) # shape: (T, W, H, 3), (T, )
-            self.save_data(resized_frames, labels, preprocessed_input_path, preprocessed_label_path)
+            preprocessed_frames, preprocessed_labels = np.array(preprocessed_frames), np.array(preprocessed_labels) # shape: (T, W, H, 3), (T, 3)
+            self.save_data(preprocessed_frames, 
+                            preprocessed_labels, 
+                            os.path.join(self.cached_path, preprocessed_input_path), 
+                            os.path.join(self.cached_path, preprocessed_label_path),
+                            visualize_frames=False, visualize_labels=False)
 
         # save logs
         end_time = time.time()
@@ -164,7 +168,7 @@ class BaseLoader(Dataset):
         self.preprocessed_data_info.to_csv(preprocessed_datainfo_path, index=False)
         print(f"preprocessed data info saved to {preprocessed_datainfo_path}")
 
-    def save_data(self, frames, bvps, input_path, labels_path, save_visualization=True):
+    def save_data(self, frames, bvps, input_path, labels_path, visualize_frames=True, visualize_labels=True):
         """Save data for a single trail.
 
         Args:
@@ -181,10 +185,18 @@ class BaseLoader(Dataset):
         self.update_logs(f"preprocessed label of shape {np.shape(bvps)} saved to {labels_path}") 
 
         # save visualization for debugging
-        if save_visualization:
-            frames_visualization_path = os.path.join(self.cached_path, input_path.replace('.npy', '.avi'))
-            self.visualize_frames(frames, frames_visualization_path)
-            self.update_logs(f"visualization video saved to {frames_visualization_path}") 
+        if visualize_frames:
+            raw_frames = frames[:, :, :, 0:3]
+            # standardized_frames = frames[:, :, :, 3:6]
+            # diff_normalized_frames = frames[:, :, :, 6:9]
+            self.visualize_frames(raw_frames, os.path.join(self.cached_path, input_path.replace('.npy', '_raw.avi'))) 
+            # self.visualize_frames(standardized_frames, os.path.join(self.cached_path, input_path.replace('.npy', '_standardized.avi')))
+            # self.visualize_frames(diff_normalized_frames, os.path.join(self.cached_path, input_path.replace('.npy', '_diff_normalized.avi')))
+
+        if visualize_labels:
+            self.visualize_labels(bvps[:, 0], os.path.join(self.cached_path, labels_path.replace('.npy', '_labels_raw.png')), title='raw')
+            self.visualize_labels(bvps[:, 1], os.path.join(self.cached_path, labels_path.replace('.npy', '_labels_standardized.png')), title='standardized')
+            self.visualize_labels(bvps[:, 2], os.path.join(self.cached_path, labels_path.replace('.npy', '_labels_diff_normalized.png')), title='diff-normalized')
 
     def load_preprocessed_data_info(self):
         """Load preprocessed data info.
@@ -194,8 +206,8 @@ class BaseLoader(Dataset):
         if not os.path.exists(preprocessed_datainfo_path):
             raise FileNotFoundError(f"preprocessed data info not found at {preprocessed_datainfo_path}")
         self.preprocessed_data_info = pd.read_csv(preprocessed_datainfo_path, 
-                                                  dtype={'input_path': str, 'label_path': str, 
-                                                         'subject_name': str, 'trail_index': str, 'length': int})
+                                                    dtype={'input_path': str, 'label_path': str, 
+                                                    'subject_name': str, 'trail_index': str, 'length': int})
 
         # build chunking index table and calculated dataset length (total number of chunks)
         self.chunking_index_table = []
@@ -264,7 +276,35 @@ class BaseLoader(Dataset):
         
         out.release()
 
-    def get_preprocessed_frames(self, data_dir):
+    def visualize_labels(self, labels, save_path, title=None):
+        """Visualize labels and save as a plot figure.
+
+        Args:
+            labels(np.array): labels of shape (num_frames, 3).
+            save_path(str): path to save the video.
+        """
+        plt.figure(figsize=(10, 5))
+        plt.plot(labels)
+        plt.xlabel('local frame idx')
+        if title is not None:
+            plt.title(title)
+        plt.savefig(save_path)
+        plt.close()
+
+    def preprocess_frames(self, frames):
+        """Preprocess frames.
+        Args:
+            frames(list[np.array(float)]): frames of shape (H, W, 3).
+        Returns:
+            preprocessed_frames(list[np.array(float)]): preprocessed frames of shape (H, W, 9). 0~2: raw, 3~5: standardized, 6~8: diff-normalized.
+        """
+        raw_frames = frames
+        standardized_frames = self.standardized_frames(raw_frames)
+        diff_normalized_frames = self.diff_normalize_frames(raw_frames)
+        preprocessed_frames = np.concatenate([raw_frames, standardized_frames, diff_normalized_frames], axis=-1, dtype=np.float32)
+        return preprocessed_frames
+
+    def get_resized_face_frames(self, data_dir):
         """Get preprocessed frames by face detection, cropping and resizing.
 
         Args:
@@ -281,7 +321,6 @@ class BaseLoader(Dataset):
         use_median_box = self.config_data.PRE_PROCESSING.CROP_FACE.USE_MEDIAN_FACE_BOX
         resized_width = self.config_data.PRE_PROCESSING.RESIZE.W
         resized_height = self.config_data.PRE_PROCESSING.RESIZE.H
-        frames_type = self.config_data.PRE_PROCESSING.FRAMES_TYPE
 
         # cropping and detection
         face_region_all = [] # all detected face regions
@@ -333,24 +372,17 @@ class BaseLoader(Dataset):
         # convert list to numpy array
         resized_frames = np.array(resized_frames, dtype=np.uint8)
 
-        # additional preprocessing
-        if frames_type == 'DiffNormalized':
-            resized_frames = self.diff_normalize_frames(resized_frames)
-        elif frames_type == 'Standardized':
-            resized_frames = self.standardized_frames(resized_frames)
-        elif frames_type == 'Raw':
-            pass
-        else:
-            raise ValueError(f"Unsupported data type: {frames_type}")
-
         return resized_frames
 
     def get_preprocessed_labels(self, data_dir, target_length):
         """Get preprocessed labels by reading raw bvp wave.
+        Args:
+            data_dir(dict): raw data info of a single trail.
+            target_length(int): target length of the preprocessed labels.
+        Returns:
+            preprocessed_labels(np.array): preprocessed labels of shape (target_length, 3). 0: raw, 1: standardized, 2: diff-normalized.
+            sq_vec(np.array): signal quality vector of shape (target_length, ).
         """
-        # load configs
-        label_type = self.config_data.PRE_PROCESSING.LABEL_TYPE
-
         # read raw bvp wave
         labels, sq_vec = self.read_raw_bvp_wave(data_dir)
 
@@ -358,17 +390,12 @@ class BaseLoader(Dataset):
         labels = self.resample_ppg(labels, target_length)
         sq_vec = self.resample_ppg(sq_vec, target_length)
 
-        # additional preprocessing
-        if label_type == 'DiffNormalized':
-            labels = self.diff_normalize_label(labels)
-        elif label_type == 'Standardized':
-            labels = self.standardized_label(labels)
-        elif label_type == 'Raw':
-            pass
-        else:
-            raise ValueError(f"Unsupported data type: {data_type}")
-
-        return labels, sq_vec
+        # preprocess labels
+        raw_labels = labels.reshape(-1, 1)
+        standardized_labels = self.standardized_label(raw_labels).reshape(-1, 1)
+        diff_normalized_labels = self.diff_normalize_label(raw_labels).reshape(-1, 1)
+        preprocessed_labels = np.concatenate([raw_labels, standardized_labels, diff_normalized_labels], axis=-1, dtype=np.float32)
+        return preprocessed_labels, sq_vec
 
     def face_detection(self, frame, frame_idx=None, use_larger_box=False, larger_box_coef=1.0):
         """Face detection on a single frame.

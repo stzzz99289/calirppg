@@ -21,7 +21,13 @@ def PBV(frames):
     C = np.swapaxes(np.array([signal_norm_r, signal_norm_g, signal_norm_b]), 0, 1)
     Ct = np.swapaxes(np.swapaxes(np.transpose(C), 0, 2), 1, 2)
     Q = np.matmul(C, Ct)
-    W = np.linalg.solve(Q, np.swapaxes(pbv, 0, 1))
+
+    try:
+        W = np.linalg.solve(Q, np.swapaxes(pbv, 0, 1))
+    except np.linalg.LinAlgError: # If Q is singular, use lstsq instead
+        if Q.shape[0] > 1:
+            raise ValueError("Currently not support batch inference with singular matrices in PBV method")
+        W = np.linalg.lstsq(Q[0], np.swapaxes(pbv, 0, 1)[0], rcond=None)[0].reshape(1, -1)
 
     A = np.matmul(Ct, np.expand_dims(W, axis=2))
     B = np.matmul(np.swapaxes(np.expand_dims(pbv.T, axis=2), 1, 2), np.expand_dims(W, axis=2))

@@ -1,0 +1,15 @@
+BASE: ['']
+
+DATALOADER:
+  DATASET: "PURE"
+  RAW_PATH: None
+  CACHED_PATH: "/home/acir/Documents/rppg-datasets/pure/cached/fixedface_bbox1.5_resize128x128"
+  FPS: 30
+
+INFERENCE:
+  METHOD_NAME: "unsupervised"
+  CHUNK:
+    DO_CHUNK: True
+    CHUNK_LENGTH: 300
+    CHUNK_OVERLAP: True
+    CHUNK_OVERLAP_STEP: 30

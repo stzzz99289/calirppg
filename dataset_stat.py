@@ -36,45 +36,41 @@ def dataset_psd_stats(config, dataloader):
 
     # iterate over batch
     for batch_idx, batch in enumerate(sbar):
-        # input shape: (batch_size, chunk_length, w, h, 3)
-        # label shape: (batch_size, chunk_length, )
+        # input shape: (batch_size, chunk_length, w, h, 9)
+        # label shape: (batch_size, chunk_length, 3)
         input, label, filename, chunk_idx_local = batch
         batch_size = input.shape[0]
 
         # iterate over each sample in a batch
         for idx in range(batch_size):
-            # input sample shape: (chunk_length, w, h, 3)
-            # label sample shape: (chunk_length, )
+            # input sample shape: (chunk_length, w, h, 9)
+            # label sample shape: (chunk_length, 3)
             frames_sample, ppg_sample = input[idx].cpu().numpy(), label[idx].cpu().numpy()
+            ppg_sample_raw = ppg_sample[:, 0]
 
             # psd stats for confidence model
-            ppg_sample_confidence = post_processing(ppg_sample, config.DATALOADER.FPS, diff_flag=False, use_bandpass=confidence_use_bandpass, low_pass=confidence_low_pass, high_pass=confidence_high_pass)
+            ppg_sample_confidence = post_processing(ppg_sample_raw, config.DATALOADER.FPS, diff_flag=False, use_bandpass=confidence_use_bandpass, low_pass=confidence_low_pass, high_pass=confidence_high_pass)
             freq_ppg_confidence, psd_ppg_confidence = signal_to_psd(ppg_sample_confidence, config.DATALOADER.FPS, freq_resolution=confidence_freq_resolution, low_pass=confidence_low_pass, high_pass=confidence_high_pass, interpolation=True)
             
             # hr stats for inference
-            ppg_sample_inference = post_processing(ppg_sample, config.DATALOADER.FPS, diff_flag=False, use_bandpass=inference_use_bandpass, low_pass=inference_low_pass, high_pass=inference_high_pass)
+            ppg_sample_inference = post_processing(ppg_sample_raw, config.DATALOADER.FPS, diff_flag=False, use_bandpass=inference_use_bandpass, low_pass=inference_low_pass, high_pass=inference_high_pass)
             freq_ppg_inference, psd_ppg_inference = signal_to_psd(ppg_sample_inference, config.DATALOADER.FPS, freq_resolution=inference_freq_resolution, low_pass=inference_low_pass, high_pass=inference_high_pass, interpolation=True)
             hr_label = psd_to_hr(freq_ppg_inference, psd_ppg_inference)
 
             psd_stats.append(psd_ppg_confidence)
             hr_stats.append(hr_label)
-            
-        # create_psd_figure(title=f"gt: {hr_label} bpm", xlim=[confidence_low_pass, confidence_high_pass], xticks=np.arange(confidence_low_pass, confidence_high_pass+1, confidence_freq_resolution*2))
-        # plot_psd(freq_ppg_confidence, psd_ppg_confidence, label="gt ppg")
-        # plt.axvline(hr_label, linestyle='--', color='red', alpha=0.8)
-        # save_figure(f"gt_psd_plot_{hr_label}.png")
-        # exit()
 
     return psd_stats, hr_stats
 
 if __name__ == "__main__":
-    dataset_names = ['UBFC-rPPG', 'UBFC-Phys', 'iBVP', 'PURE', 'MAHNOB']
+    # dataset_names = ['UBFC-rPPG', 'UBFC-Phys', 'iBVP', 'PURE'] # MAHNOB gt is ECG signal, not ppg signal
+    dataset_names = ['PURE']
 
     """
     collect psd and hr statistics from all available datasets
     """
     for dataset_name in dataset_names:
-        config_file = f"configs/{dataset_name}_inference.yaml"
+        config_file = f"configs/preprocessing/{dataset_name}_preprocessing_72.yaml"
         config = get_config(config_file=config_file)
 
         # get dataloader
@@ -99,15 +95,30 @@ if __name__ == "__main__":
         print(f"hr_stats shape: {np.shape(hr_stats)} saved to {hr_stats_path}")
 
     """
+    conbine statistics from all datasets with PPG ground truth
+    """
+    # psd_stats_lst = []
+    # hr_stats_lst = []
+    # for dataset_name in dataset_names:
+    #     psd_stats = np.load(f'results/stats/{dataset_name}_psd_stats.npy')
+    #     hr_stats = np.load(f'results/stats/{dataset_name}_hr_stats.npy')
+    #     psd_stats_lst.append(psd_stats)
+    #     hr_stats_lst.append(hr_stats)
+    # psd_stats_all = np.concatenate(psd_stats_lst, axis=0)
+    # hr_stats_all = np.concatenate(hr_stats_lst, axis=0)
+    # np.save(f'results/stats/all_psd_stats.npy', psd_stats_all)
+    # np.save(f'results/stats/all_hr_stats.npy', hr_stats_all)
+
+    """
     plot hr stats
     """
-    # hr_stats_all = []
-    # for dataset_name in dataset_names:
-    #     hr_stats = np.load(f'results/stats/{dataset_name}_hr_stats.npy')
-    #     plot_hr_hist(hr_stats, title=f"Histogram of HR for {dataset_name}")
-    #     save_figure(f'results/stats/hr_hist_{dataset_name}.png')
-    #     hr_stats_all.append(hr_stats)
-    # # conbine all hr stats
-    # hr_stats_all = np.concatenate(hr_stats_all, axis=0)
-    # plot_hr_hist(hr_stats_all, title=f"Histogram of HR for all datasets")
-    # save_figure(f'results/stats/hr_hist_all.png')
+    hr_stats_all = []
+    for dataset_name in dataset_names:
+        hr_stats = np.load(f'results/stats/{dataset_name}_hr_stats.npy')
+        plot_hr_hist(hr_stats, title=f"Histogram of HR for {dataset_name}")
+        save_figure(f'results/stats/hr_hist_{dataset_name}.png')
+        hr_stats_all.append(hr_stats)
+    # conbine all hr stats
+    hr_stats_all = np.concatenate(hr_stats_all, axis=0)
+    plot_hr_hist(hr_stats_all, title=f"Histogram of HR for {dataset_names} datasets")
+    save_figure(f'results/stats/hr_hist_all.png')

@@ -1,0 +1,21 @@
+BASE: ['']
+
+DATALOADER:
+  DATASET: "UBFC-Phys"
+  CACHED_PATH: "/home/acir/Documents/rppg-datasets/ubfc-phys/cached/fixedface_bbox1.5_resize72x72"
+  FPS: 30
+
+INFERENCE:
+  METHOD_NAME: "ibvpnet"
+  DEVICE: "cuda:0"
+  BATCH_SIZE: 4
+  CHUNK:
+    DO_CHUNK: True
+    CHUNK_LENGTH: 160
+    CHUNK_OVERLAP: True
+    CHUNK_OVERLAP_STEP: 60
+  INPUT_FRAME_SIZE: (72, 72)
+  INPUT_FRAMES_NUM: 160
+  INPUT_TYPE: ["raw"]
+  LABEL_TYPE: "standardized"
+  INPUT_FORMAT: "NCDHW"

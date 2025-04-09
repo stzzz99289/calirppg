@@ -1,0 +1,12 @@
+BASE: ['']
+
+DATALOADER:
+  DATASET: "UBFC-rPPG"
+  RAW_PATH: "/mnt/16TB/rppg-datasets/ubfc-rppg/raw"
+  CACHED_PATH: "/mnt/16TB/rppg-datasets/ubfc-rppg/cached/fixedface_bbox1.5_resize72x72"
+  FPS: 30
+
+PRE_PROCESSING:
+  RESIZE:
+    W: 72
+    H: 72

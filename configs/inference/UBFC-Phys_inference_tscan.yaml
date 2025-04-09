@@ -1,0 +1,21 @@
+BASE: ['']
+
+DATALOADER:
+  DATASET: "UBFC-Phys"
+  CACHED_PATH: "/home/acir/Documents/rppg-datasets/ubfc-phys/cached/fixedface_bbox1.5_resize72x72"
+  FPS: 30
+
+INFERENCE:
+  METHOD_NAME: "tscan"
+  DEVICE: "cuda:0"
+  BATCH_SIZE: 4
+  CHUNK:
+    DO_CHUNK: True
+    CHUNK_LENGTH: 210
+    CHUNK_OVERLAP: True
+    CHUNK_OVERLAP_STEP: 60
+  INPUT_FRAME_SIZE: (72, 72)
+  INPUT_FRAMES_NUM: 210
+  INPUT_TYPE: ["diffnormalized", "standardized"]
+  LABEL_TYPE: "diffnormalized"
+  INPUT_FORMAT: "NDCHW"

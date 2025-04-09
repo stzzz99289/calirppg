@@ -1,4 +1,3 @@
-"""Unsupervised learning methods including POS, GREEN, CHROME, ICA, LGI and PBV."""
 import numpy as np
 import pandas as pd
 import os
@@ -14,9 +13,8 @@ from rppg_methods.unsupervised.methods.PBV import PBV
 from rppg_methods.unsupervised.methods.POS_WANG import POS_WANG
 from rppg_methods.unsupervised.methods.OMIT import OMIT
 from tqdm import tqdm
-# from evaluation.BlandAltmanPy import BlandAltman
 
-def sample_experiment(config, dataloader, confidence_model=None, unsupervised_method_names=['POS', 'CHROM', 'ICA', 'GREEN', 'LGI', 'PBV', 'OMIT']):
+def sample_experiment(config, dataloader, confidence_model=None, test_batch_num=10, unsupervised_method_names=['POS', 'CHROM', 'ICA', 'GREEN', 'LGI', 'PBV', 'OMIT']):
     fps = config.DATALOADER.FPS
     inference_low_pass = config.POST_PROCESSING.BANDPASS_LOW_FREQ
     inference_high_pass = config.POST_PROCESSING.BANDPASS_HIGH_FREQ
@@ -25,11 +23,22 @@ def sample_experiment(config, dataloader, confidence_model=None, unsupervised_me
     confidence_high_pass = config.CONFIDENCE_MODEL.BANDPASS_HIGH_FREQ
     confidence_freq_resolution = config.CONFIDENCE_MODEL.FREQ_RESOLUTION
 
-    # get one data sample
+    # test on some batches
+    dataset_name = config.DATALOADER.DATASET
+    preprocess_name = config.DATALOADER.CACHED_PATH.split("/")[-1]
+    saving_dir = f"results/unsupervised_samples/{dataset_name}/{preprocess_name}"
+    os.makedirs(saving_dir, exist_ok=True)
     sbar = tqdm(dataloader, total=len(dataloader))
     for batch_idx, batch in enumerate(sbar):
+        if batch_idx >= test_batch_num:
+            break
+        os.makedirs(f"{saving_dir}/batch_{batch_idx:02d}", exist_ok=True)
+
+        # read raw frames and ppg for unsupervised methods
         input, label, filename, chunk_idx_local = batch
         frames_sample, ppg_sample = input[0].cpu().numpy(), label[0].cpu().numpy()
+        frames_sample = frames_sample[:, :, :, :3]
+        ppg_sample = ppg_sample[:, 0]
 
         """
         inference plot
@@ -48,7 +57,7 @@ def sample_experiment(config, dataloader, confidence_model=None, unsupervised_me
             rppg = post_processing(rppg, fps, low_pass=inference_low_pass, high_pass=inference_high_pass)
             freq_rppg, psd_rppg = signal_to_psd(rppg, fps, freq_resolution=inference_freq_resolution, low_pass=inference_low_pass, high_pass=inference_high_pass, interpolation=True)
             plot_psd(freq_rppg, psd_rppg, label=f"{method_name}", alpha=0.3)
-        save_figure(f"gt_psd_plot_{hr_label}.png")
+        save_figure(f"{saving_dir}/batch_{batch_idx:02d}/gt_psd_plot_{hr_label}.png")
 
         """
         confidence plot
@@ -57,22 +66,44 @@ def sample_experiment(config, dataloader, confidence_model=None, unsupervised_me
             create_psd_figure(title=f"gt: {hr_label} bpm", xlim=[confidence_low_pass, confidence_high_pass], xticks=np.arange(confidence_low_pass, confidence_high_pass+1, confidence_freq_resolution*2))
             plt.axvline(hr_label, linestyle='--', color='red', alpha=0.8)
 
+            # confidence psd plot
             rppg = frames2rPPG_unsupervised(frames_sample, fps, method_name)
             rppg = post_processing(rppg, fps, low_pass=confidence_low_pass, high_pass=confidence_high_pass)
             freq_rppg, psd_rppg = signal_to_psd(rppg, fps, freq_resolution=confidence_freq_resolution, low_pass=confidence_low_pass, high_pass=confidence_high_pass, interpolation=True)
             hr_pred = psd_to_hr(freq_rppg, psd_rppg)
             if confidence_model is not None:
-                confidence = confidence_model.predict(hr_pred, freq_rppg, psd_rppg)
-                plot_psd(freq_rppg, psd_rppg, label=f"hr_pred={hr_pred:.0f} bpm, confidence={confidence:.2f}")
+                confidence_distance = confidence_model.predict(hr_pred, freq_rppg, psd_rppg, confidence_type="distance")
+                confidence_pvalue = confidence_model.predict(hr_pred, freq_rppg, psd_rppg, confidence_type="pvalue")
+                confidence_percentile = confidence_model.predict(hr_pred, freq_rppg, psd_rppg, confidence_type="percentile")
+                plot_psd(freq_rppg, psd_rppg, label=f"rppg, hr_pred={hr_pred:.0f} bpm")
                 rppg_hr_idx = np.argmin(np.abs(confidence_model.hr_values - hr_pred))
-                ref_psd_mean = confidence_model.psd_statistics_smoothed["psd_means"][rppg_hr_idx]
-                ref_psd_std = confidence_model.psd_statistics_smoothed["psd_stds"][rppg_hr_idx]
-                plot_psd_statistics(freq_rppg, ref_psd_mean, ref_psd_std, label="reference psd", alpha=0.5)
-            save_figure(f"confidence_plot_{hr_label}_{method_name}.png")
-        break
-           
-def unsupervised_predict(config, dataloader, method_name, confidence_model=None):
-    sbar = tqdm(dataloader, total=len(dataloader))
+                ref_psd_mean = confidence_model.psd_statistics["psd_means"][rppg_hr_idx]
+                ref_psd_covariance = confidence_model.psd_statistics["psd_covariances"][rppg_hr_idx]
+                plot_psd_statistics(freq_rppg, ref_psd_mean, ref_psd_covariance, alpha=0.5)
+                plt.title(f"distance: {confidence_distance*100:.0f}%, hr_std={confidence_model.confidence_to_std(confidence_distance):.1f} bpm\n \
+                        pvalue: {confidence_pvalue*100:.0f}%, hr_std={confidence_model.confidence_to_std(confidence_pvalue):.1f} bpm\n \
+                        percentile: {confidence_percentile*100:.0f}%, hr_std={confidence_model.confidence_to_std(confidence_percentile):.1f} bpm")
+                plt.tight_layout()
+                save_figure(f"{saving_dir}/batch_{batch_idx:02d}/confidence_plot_{hr_label}_{method_name}.png")
+
+            # multi-class confidence plot
+            # hr_classes_num = confidence_model.hr_values.shape[0]
+            # confidence_list = np.zeros((hr_classes_num, ))
+            # for hr_idx in tqdm(list(range(hr_classes_num))):
+            #     hr = confidence_model.hr_values[hr_idx]
+            #     confidence = confidence_model.predict(hr, freq_rppg, psd_rppg)
+            #     confidence_list[hr_idx] = confidence
+            # plt.figure()
+            # plt.bar(confidence_model.hr_values, confidence_list)
+            # save_figure(f"confidence_plot_{method_name}.png")
+
+def unsupervised_predict(config, dataloader, method_name, confidence_model=None, saving_dir=None, num_batches=None):
+    # check if already done inference for this method on the dataset
+    if saving_dir is not None:
+        os.makedirs(saving_dir, exist_ok=True)
+        if os.path.exists(f"{saving_dir}/{method_name}_metrics.csv"):
+            print(f"{saving_dir}/{method_name}_metrics.csv already exists")
+            return None
 
     # bandpass for inference (calculate hr)
     use_bandpass = config.POST_PROCESSING.BANDPASS
@@ -85,33 +116,37 @@ def unsupervised_predict(config, dataloader, method_name, confidence_model=None)
     confidence_high_pass = config.CONFIDENCE_MODEL.BANDPASS_HIGH_FREQ
     confidence_freq_resolution = config.CONFIDENCE_MODEL.FREQ_RESOLUTION
 
+    # iterate over batch
     hr_pred_lst = []
     hr_label_lst = []
     snr_lst = []
     macc_lst = []
     local_metrics = []
-
-    # iterate over batch
+    sbar = tqdm(dataloader, total=len(dataloader))
     for batch_idx, batch in enumerate(sbar):
+        if num_batches is not None and batch_idx >= num_batches:
+            break
+
         # input shape: (batch_size, chunk_length, w, h, 3)
         # label shape: (batch_size, chunk_length, )
         input, label, filename, chunk_idx_local = batch
         batch_size = input.shape[0]
 
         # iterate over each sample in a batch
-        for idx in range(batch_size):
+        for sample_idx in range(batch_size):
             # input sample shape: (chunk_length, w, h, 3)
             # label sample shape: (chunk_length, )
-            frames_sample, ppg_sample = input[idx].cpu().numpy(), label[idx].cpu().numpy()
-            filename_sample, chunk_idx_local_sample = filename[idx], int(chunk_idx_local[idx])
+            frames_sample, ppg_sample = input[sample_idx].cpu().numpy(), label[sample_idx].cpu().numpy()
+            filename_sample, chunk_idx_local_sample = filename[sample_idx], int(chunk_idx_local[sample_idx])
 
             # frames to rPPG
-            rppg = frames2rPPG_unsupervised(frames_sample, config.DATALOADER.FPS, method_name)
+            rppg_sample = frames2rPPG_unsupervised(frames_sample, config.DATALOADER.FPS, method_name)
 
             # post-processing
-            rppg = post_processing(rppg, config.DATALOADER.FPS, diff_flag=False, use_bandpass=use_bandpass, low_pass=low_pass, high_pass=high_pass)
-            rppg_confidence = post_processing(rppg, config.DATALOADER.FPS, diff_flag=False, use_bandpass=use_bandpass, low_pass=confidence_low_pass, high_pass=confidence_high_pass)
-            ppg_sample = post_processing(ppg_sample, config.DATALOADER.FPS, diff_flag=False, use_bandpass=use_bandpass, low_pass=low_pass, high_pass=high_pass)
+            diff_flag = False # always use raw label for unsupervised methods
+            rppg = post_processing(rppg_sample, config.DATALOADER.FPS, diff_flag=diff_flag, use_bandpass=use_bandpass, low_pass=low_pass, high_pass=high_pass)
+            rppg_confidence = post_processing(rppg_sample, config.DATALOADER.FPS, diff_flag=diff_flag, use_bandpass=use_bandpass, low_pass=confidence_low_pass, high_pass=confidence_high_pass)
+            ppg_sample = post_processing(ppg_sample, config.DATALOADER.FPS, diff_flag=diff_flag, use_bandpass=use_bandpass, low_pass=low_pass, high_pass=high_pass)
 
             # PPG to PSD
             freq_rppg, psd_rppg = signal_to_psd(rppg, config.DATALOADER.FPS, freq_resolution=freq_resolution, low_pass=low_pass, high_pass=high_pass, interpolation=True)
@@ -124,9 +159,13 @@ def unsupervised_predict(config, dataloader, method_name, confidence_model=None)
 
             # calculate confidence score
             if confidence_model is not None:
-                confidence = confidence_model.predict(hr_pred, freq_rppg_confidence, psd_rppg_confidence)
+                confidence_distance = confidence_model.predict(hr_pred, freq_rppg_confidence, psd_rppg_confidence, confidence_type="distance")
+                confidence_pvalue = confidence_model.predict(hr_pred, freq_rppg_confidence, psd_rppg_confidence, confidence_type="pvalue")
+                confidence_percentile = confidence_model.predict(hr_pred, freq_rppg_confidence, psd_rppg_confidence, confidence_type="percentile")
             else:
-                confidence = None
+                confidence_distance = None
+                confidence_pvalue = None
+                confidence_percentile = None
 
             # evaluation (rPPG vs PPG label)
             macc = compute_macc(rppg, ppg_sample)
@@ -142,7 +181,9 @@ def unsupervised_predict(config, dataloader, method_name, confidence_model=None)
                 'hr_label': hr_label, 
                 'snr': snr, 
                 'macc': macc,
-                'confidence': confidence,
+                'confidence_distance': confidence_distance,
+                'confidence_pvalue': confidence_pvalue,
+                'confidence_percentile': confidence_percentile,
                 'abs_hr_error': np.abs(hr_pred - hr_label)
                 })
     hr_pred_lst = np.array(hr_pred_lst)
@@ -151,11 +192,9 @@ def unsupervised_predict(config, dataloader, method_name, confidence_model=None)
     macc_lst = np.array(macc_lst)
 
     # save local metrics
-    dataset_name = config.DATALOADER.DATASET
-    local_metrics_dir = f'results/{dataset_name}'
-    os.makedirs(local_metrics_dir, exist_ok=True)
-    local_metrics_df = pd.DataFrame(local_metrics)
-    local_metrics_df.to_csv(f'{local_metrics_dir}/{method_name}_metrics.csv', index=False)
+    if saving_dir is not None:
+        local_metrics_df = pd.DataFrame(local_metrics)
+        local_metrics_df.to_csv(f'{saving_dir}/{method_name}_metrics.csv', index=False)
 
     # return global metrics
     snr_mean, snr_std = compute_metric_avg_std(snr_lst)
@@ -165,7 +204,7 @@ def unsupervised_predict(config, dataloader, method_name, confidence_model=None)
     mape_mean, mape_std = compute_mape(hr_pred_lst, hr_label_lst)
     pearson_mean, pearson_std = compute_pearson(hr_pred_lst, hr_label_lst)
     global_metrics = {
-        'dataset_name': dataset_name, 'method_name': method_name,
+        'dataset_name': config.DATALOADER.DATASET, 'method_name': method_name,
         'snr_mean': snr_mean, 'snr_std': snr_std,
         'macc_mean': macc_mean, 'macc_std': macc_std,
         'mae_mean': mae_mean, 'mae_std': mae_std,
@@ -173,7 +212,7 @@ def unsupervised_predict(config, dataloader, method_name, confidence_model=None)
         'mape_mean': mape_mean, 'mape_std': mape_std,
         'pearson_mean': pearson_mean, 'pearson_std': pearson_std
     }
-    print(f'Dataset: {dataset_name}\nMethod: {method_name}\nGlobal metrics: {global_metrics}')
+    # print(f'Dataset: {dataset_name}\nMethod: {method_name}\nGlobal metrics: {global_metrics}')
     return global_metrics
 
 def frames2rPPG_unsupervised(frames, fps, method_name):

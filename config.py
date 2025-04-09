@@ -22,9 +22,6 @@ _C.DATALOADER.DATASET = None
 _C.DATALOADER.RAW_PATH = None
 _C.DATALOADER.CACHED_PATH = None
 
-# loaded frames format
-_C.DATALOADER.DATA_FORMAT = 'NDCHW' # available options: ['NDCHW', 'NCDHW', 'NDHWC']
-
 """
 preprocessing
 """
@@ -45,25 +42,32 @@ _C.PRE_PROCESSING.RESIZE = CN()
 _C.PRE_PROCESSING.RESIZE.W = 128
 _C.PRE_PROCESSING.RESIZE.H = 128
 
-# data type
-_C.PRE_PROCESSING.FRAMES_TYPE = 'Raw' # additional preprocessing, available options: ['Raw', `DiffNormalized`, `Standardized`]
-_C.PRE_PROCESSING.LABEL_TYPE = 'Raw' # additional preprocessing, available options: ['Raw', `DiffNormalized`, `Standardized`]
-
 """
 inference
 """
 _C.INFERENCE = CN()
 
 # rppg method name
-# supported methods: ["POS", "CHROM", "ICA", "GREEN", "LGI", "PBV", "OMIT"]
-_C.INFERENCE.METHOD_NAME = "POS"
+# supported methods: ["unsupervised", "deepphys", "physnet"]
+_C.INFERENCE.METHOD_NAME = "unsupervised"
 
 # chunking
 _C.INFERENCE.CHUNK = CN()
-_C.INFERENCE.CHUNK.DO_CHUNK = False # split one video sequence into chunks
+_C.INFERENCE.CHUNK.DO_CHUNK = True # split one video sequence into chunks
 _C.INFERENCE.CHUNK.CHUNK_LENGTH = 300 # if DO_CHUNK is True, this is the chunk length, else chunk_length=video_length
-_C.INFERENCE.CHUNK.CHUNK_OVERLAP = False # chunk overlaps each other
+_C.INFERENCE.CHUNK.CHUNK_OVERLAP = True # chunk overlaps each other
 _C.INFERENCE.CHUNK.CHUNK_OVERLAP_STEP = 30 # if CHUNK_OVERLAP is True, this is the step between chunks, else step=chunk_length
+
+# batching
+_C.INFERENCE.BATCH_SIZE = 1
+
+# input data properties
+_C.INFERENCE.DEVICE = "cpu"
+_C.INFERENCE.INPUT_FRAME_SIZE = (72, 72) # specify input frame size, None means any frame size is ok
+_C.INFERENCE.INPUT_FRAMES_NUM = 128 # specify input number of frames to model, None means any number of frames is ok
+_C.INFERENCE.INPUT_TYPE = ['raw', 'standardized', 'diffnormalized']
+_C.INFERENCE.LABEL_TYPE = 'raw'
+_C.INFERENCE.INPUT_FORMAT = 'NDHWC'
 
 """
 post-processing
@@ -74,7 +78,7 @@ _C.POST_PROCESSING = CN()
 _C.POST_PROCESSING.BANDPASS = True 
 _C.POST_PROCESSING.BANDPASS_LOW_FREQ = 45 # in bpm
 _C.POST_PROCESSING.BANDPASS_HIGH_FREQ = 150 # in bpm
-_C.POST_PROCESSING.FREQ_RESOLUTION = 1 # in bpm
+_C.POST_PROCESSING.FREQ_RESOLUTION = 2 # in bpm
 
 """
 confidence model
@@ -83,7 +87,7 @@ _C.CONFIDENCE_MODEL = CN()
 _C.CONFIDENCE_MODEL.BANDPASS = True
 _C.CONFIDENCE_MODEL.BANDPASS_LOW_FREQ = 45 # in bpm
 _C.CONFIDENCE_MODEL.BANDPASS_HIGH_FREQ = 300 # in bpm, consider second harmonic
-_C.CONFIDENCE_MODEL.FREQ_RESOLUTION = 1 # in bpm
+_C.CONFIDENCE_MODEL.FREQ_RESOLUTION = 2 # in bpm
 
 
 # update cfg given yaml file
@@ -107,7 +111,7 @@ def _update_config_from_file(config, cfg_file):
     config.freeze()
 
 # get local default cfg given command line args
-def get_config(config_file):
+def get_config_from_file(config_file):
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
     config = _C.clone()
@@ -116,7 +120,7 @@ def get_config(config_file):
     return config
 
 # get local default cfg
-def get_cfg_defaults():
+def get_default_config():
     return _C.clone()
 
 # global default cfg
